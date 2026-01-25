@@ -1,0 +1,669 @@
+# Activity Adjusted Stake Consensus Algorithm
+import random
+import numpy as np
+from sklearn.linear_model import LogisticRegression
+import joblib
+import socket
+import io
+import json
+import numpy as np
+import hashlib
+import time
+import cmd
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
+import sys
+import psutil
+
+class Block:
+    def __init__(self, index, previous_hash, timestamp, data, hash, nonce, mined_by=None):
+        self.index = index
+        self.previous_hash = previous_hash
+        self.timestamp = timestamp
+        self.data = data
+        self.hash = hash
+        self.nonce = nonce
+        self.mined_by = mined_by
+
+    def to_dict(self):
+        return self.__dict__
+    
+class Blockchain:
+    def __init__(self, difficulty=4):
+        self.chain = [self.create_genesis_block()]
+        self.difficulty = difficulty
+        self.pending_transactions = []
+        self.validators = set()
+
+    def create_genesis_block(self):
+        return Block(0, "0", int(time.time()), "Genesis Block", self.calculate_hash(0, "0", int(time.time()), "Genesis Block", 0), 0)
+
+    def get_latest_block(self):
+        return self.chain[-1]
+
+    def add_block(self, new_block):
+        new_block.previous_hash = self.get_latest_block().hash
+        new_block.hash = self.calculate_hash(new_block.index, new_block.previous_hash, new_block.timestamp, new_block.data, new_block.nonce)
+        self.chain.append(new_block)
+        # print(len(self.chain))
+
+    @staticmethod
+    def calculate_hash(index, previous_hash, timestamp, data, nonce):
+        value = str(index) + str(previous_hash) + str(timestamp) + str(data) + str(nonce)
+        return hashlib.sha256(value.encode('utf-8')).hexdigest()
+
+    def add_transaction(self, sender, recipient, amount):
+        self.pending_transactions.append(f"{sender} sends {amount} coins to {recipient}")
+
+class Node:
+    def __init__(self, address, port, is_validator=False):
+        self.address = address
+        self.port = port
+        self.blockchain = Blockchain()
+        self.is_validator = is_validator
+        self.peers = set()
+        self.model_version = 0
+        self.nodes = []
+        self.difficulty = 4
+        self.visited = False
+        self.messages_id = set()
+        self.probabilities = set()
+        self.parameters = None
+        self.active = 0
+        self._is_running = True
+        if is_validator:
+            self.blockchain.validators.add(port)
+    
+    def select_leader(self):
+        if not self.blockchain.validators:
+            return None
+        
+        stakes = [self.ask_stake('127.0.0.1', port) for port in self.blockchain.validators]
+        total_stake = sum(stakes)
+        
+        if total_stake > 0:
+            weights = [stake/total_stake for stake in stakes]
+            leader = random.choices(list(self.blockchain.validators), weights=weights)[0]
+        else:
+            leader = random.choice(list(self.blockchain.validators))
+            
+        return leader
+
+    def ask_stake(self, address, port):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.connect((address, port))
+                s.sendall(json.dumps({'type': 'get_stake'}).encode())
+                data = s.recv(4096)
+                if data:
+                    message = json.loads(data.decode())
+                    return message['stake']
+            except Exception as e:
+                # print(f"Failed to get stake from {address}:{port}: {e}")
+                return 0
+            
+    def add_node(self, node):
+        self.nodes.append(node)
+
+    def start(self):
+        max_retries = 5
+        retry_delay = 0.5
+        
+        for attempt in range(max_retries):
+            try:
+                with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    # Windows-specific socket options
+                    if sys.platform == 'win32':
+                        # On Windows, use SO_EXCLUSIVEADDRUSE to prevent port conflicts
+                        # But first try SO_REUSEADDR for compatibility
+                        try:
+                            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                        except:
+                            pass
+                    else:
+                        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    
+                    s.bind((self.address, self.port))
+                    s.listen()
+                    s.settimeout(1.0)
+                    # print(f"Node listening on {self.address}:{self.port}")
+                    
+                    with ThreadPoolExecutor(max_workers=10) as executor:
+                        while self._is_running:
+                            try:
+                                conn, addr = s.accept()
+                                executor.submit(self.handle_connection, conn, addr)
+                            except socket.timeout:
+                                continue
+                            except Exception as e:
+                                if self._is_running:
+                                    print(f"Server error: {e}")
+                                break
+                    break  # Successfully started and stopped, exit retry loop
+                    
+            except PermissionError as e:
+                if attempt < max_retries - 1:
+                    # print(f"Port {self.port} binding failed (attempt {attempt + 1}/{max_retries}), retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    print(f"Failed to bind to port {self.port} after {max_retries} attempts: {e}")
+                    raise
+            except Exception as e:
+                print(f"Unexpected error starting node on port {self.port}: {e}")
+                raise
+
+    def stop(self):
+        # print("Stopping node...")
+        self._is_running = False
+
+    def handle_connection(self, conn, addr):
+        with conn:
+            data = conn.recv(4096)
+            if data:
+                message = json.loads(data.decode())
+                if message['type'] == 'new_block':
+                    self.blockchain.pending_transactions = []
+                    self.probabilities = set()
+                    # print(message['id'], self.messages_id)
+                    if message['id'] in self.messages_id:
+                        return
+                    # print('Received new block')
+                    new_block = Block(**message['data'])
+                    new_block.previous_hash = self.blockchain.get_latest_block().hash
+                    self.blockchain.chain.append(new_block)
+                    # self.blockchain.add_block(new_block)
+
+                    # print(f"Block added: {new_block.index}")
+                    self.broadcast(message)
+                elif message['type'] == 'new_transaction':
+                    if message['id'] in self.messages_id:
+                        # print(f"Transaction message ID: {message['id']} already visited")
+                        conn.sendall(json.dumps({'status': -1}))
+                        return
+                    # print('Received new transaction')
+                    self.blockchain.add_transaction(**message['data'])
+                    self.broadcast(message)
+                    if self.is_validator:
+                        # print("Mining new block to include transaction...")
+                        self.mine(message)
+                    conn.sendall(json.dumps({'status': 1}))
+                elif message['type'] == 'get_chain':
+                    chain_data = [block.to_dict() for block in self.blockchain.chain]
+                    conn.sendall(json.dumps(chain_data).encode())
+                elif message['type'] == 'add_peer':
+                    peer_address = message['address']
+                    peer_port = message['port']
+                    is_validator = message['is_validator']
+                    if (peer_address, peer_port) not in self.peers:
+                        if is_validator:
+                            self.add_node((peer_address, peer_port))
+                        self.add_peer(peer_address, peer_port)
+                        # print(f"Added peer: {peer_address}:{peer_port}")
+                        response = {
+                            'is_validator': self.is_validator,
+                            'nodes': self.nodes
+                        }
+                elif message['type'] == 'get_stake':
+                    stake = random.randint(1, 100)
+                    conn.sendall(json.dumps({'stake': stake}).encode())
+                elif message['type'] == 'model_update':
+                    self.handle_model_update(message['data'])
+                elif message['type'] == 'get_model':
+                    self.send_model(conn)
+                elif message['type'] == 'store_validators':
+                    if message['id'] in self.messages_id:
+                        conn.sendall(json.dumps({'validators': list(self.blockchain.validators)}).encode())
+                        return
+                    # print(f"Store validators called from {addr}")
+                    self.blockchain.validators = self.blockchain.validators.union(set(message['validators']))
+                    # print(f"After message: {self.blockchain.validators}")
+                    if len(self.messages_id) != 0:
+                        max_msg_id = max(self.messages_id)
+                    else:
+                        max_msg_id = 0
+                    self.broadcast({
+                        'type': 'store_validators',
+                        'validators': list(self.blockchain.validators),
+                        'id': max_msg_id + 1
+                    })
+                    
+                    conn.sendall(json.dumps({'validators': list(self.blockchain.validators)}).encode())
+                elif message['type'] == 'probabilities':
+                    if message['id'] in self.messages_id:
+                        # print(f"Probabilities message ID: {message['id']} already visited, data: {eval(message['data'])}")
+                        self.probabilities.update(eval(message['data']))
+                        conn.sendall(json.dumps({'data': str(self.probabilities)}).encode())
+                        return
+                    # print(f"Probabilities received from {addr}")
+                    self.probabilities.update(eval(message['data']))
+                    # print(f"Updated probabilities: {self.probabilities}")
+                    self.broadcast(message)
+                    conn.sendall(json.dumps({'data': str(self.probabilities)}).encode())
+    
+    def broadcast_to_peer(self, peer, message):
+        # print(f"Broadcasting to peer {peer}")
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            try:
+                s.connect(peer)
+                # print(f"Connected to peer {peer}")
+                if(message['type'] == 'probabilities'):
+                    # print(f"Message : {message}")
+                    pass
+                s.sendall(json.dumps(message).encode())
+                if message['type'] == 'store_validators':
+                    response_data = s.recv(4096)
+                    # print(f"Received validators response, message id: {message['id']}")
+                    response = json.loads(response_data.decode())
+                    self.blockchain.validators = self.blockchain.validators.union(set(response['validators']))
+                    # print(f"Response from peer {peer}: {response}")
+                elif message['type'] == 'new_transaction':
+                    response_data = s.recv(4096)
+                    # print(f"Received transaction response, message id: {message['id']}")
+                elif message['type'] == 'probabilities':
+                    response_data = s.recv(4096)
+                    # print(f"Received probabilities response, message id: {message['id']}")
+                    response = json.loads(response_data.decode())
+                    self.probabilities.update(eval(response['data']))
+                    # print(f"Probability Response from peer {peer}: {response}")
+                    # print(f"Updated probabilities: {self.probabilities}")
+            except Exception as e:
+                # print(f"Failed to connect to peer {peer}: {e}")
+                pass
+            finally:
+                self.visited = False
+
+    def broadcast(self, message):
+        if message['id'] in self.messages_id:
+            # print(f"Cannot broadcast message with ID {message['id']} and type {message['type']}")
+            return
+        # print(f"Messaged ID: {self.messages_id}")
+        self.messages_id.add(message['id'])
+        # print(f"Messaged ID: {self.messages_id}")
+        # print(f"Broadcasting message type: {message['type']}")
+        with ThreadPoolExecutor() as executor:
+            executor.map(lambda peer: self.broadcast_to_peer(peer, message), self.peers)
+            
+            # for future in as_completed(future_to_peer):
+            #     result = future.result()
+            
+    
+    def add_peer(self, address, port):
+        self.peers.add((address, port))
+
+    def POS(self, message):
+        # print(f"{self.port} Leader {message['leader']}")
+        if message['leader'] == self.port:
+            # print("Mining new block...")
+            latest_block = self.blockchain.get_latest_block()
+            block = Block(len(self.blockchain.chain), latest_block.hash, int(time.time()), self.blockchain.pending_transactions, "", 0, self.port)
+            self.blockchain.pending_transactions = []
+            self.blockchain.add_block(block)
+            # print(f"Block mined by {self.port}")
+            if len(self.messages_id) != 0:
+                max_msg_id = max(self.messages_id)
+            else:
+                max_msg_id = 0
+            self.broadcast({
+                'type': 'new_block',
+                'data': block.to_dict(),
+                'id': max_msg_id + 1
+            })
+        else:
+            # print(f"Node {message['leader']} is the leader")
+            pass
+
+    def score(self, params):
+        """
+        Consensus Score (CS) = [α * AIST * (1 - CST/TST) * log(1 + 1/LIT)] / [β * (CBM + 1)]
+        """
+        alpha = 3
+        beta = 1
+        aist = params['aist']
+        cst = params['cst']
+        tst = params['tst']
+        lit = params['lit']
+        cbm = params['cbm']
+        
+        if cst == 0:
+            aist = len(self.blockchain.validators) * 2
+        if cst == 1:
+            aist = len(self.blockchain.validators)
+
+        CS = (alpha * aist * (1 - cst/tst) * np.log(1 + 1/(lit + 0.000001))) / (beta * (cbm + 1)**2)
+        # CS = (alpha * params['aist'] * (1 - params['cst']/params['tst']) * np.log(1 + 1/params['lit'])) / (beta * (params['cbm'] + 1))
+        return CS
+    
+    def recover_parameters_from_chain(self):
+        """
+        Recover activity parameters by replaying blockchain history.
+        
+        This handles node churn (nodes going offline and rejoining):
+        - Offline node comes back online
+        - Syncs blockchain
+        - Replays activity tracking from blockchain data
+        - Rejoins consensus immediately without external coordination
+        
+        Complexity: O(b*v) where b = blocks, v = validators
+        This is a one-time cost during rejoin, acceptable for IoT networks.
+        """
+        if len(self.blockchain.chain) <= 3:
+            self.parameters = None  # Will reinitialize
+            return
+        
+        # Initialize parameters for all current validators
+        self.parameters = {
+            port: {'ss': 0, 'lit': 0, 'aist': 0, 'cst': 0, 'tst': 0, 'cbm': 0}
+            for port in self.blockchain.validators
+        }
+        
+        # Replay blockchain to rebuild state from scratch
+        for block_index in range(3, len(self.blockchain.chain)):
+            block_pos = block_index - 3  # Position in consensus (after genesis blocks)
+            mined_by = self.blockchain.chain[block_index].mined_by
+            
+            if mined_by not in self.parameters:
+                self.parameters[mined_by] = {
+                    'ss': 0, 'lit': 0, 'aist': 0, 
+                    'cst': 0, 'tst': 0, 'cbm': 0
+                }
+            
+            # Update parameters as if mining happened in sequence
+            old_aist = self.parameters[mined_by]['aist']
+            old_cst = self.parameters[mined_by]['cst']
+            old_lit = self.parameters[mined_by]['lit']
+            
+            self.parameters[mined_by]['aist'] = (
+                (old_aist * old_cst + block_pos + 1 - old_lit) / 
+                (old_cst + 1) if old_cst > 0 else block_pos + 1
+            )
+            self.parameters[mined_by]['cst'] += 1
+            self.parameters[mined_by]['tst'] = block_pos + 1
+            self.parameters[mined_by]['lit'] = block_pos + 1
+            self.parameters[mined_by]['cbm'] += 1
+            
+            # Reset consecutive blocks for other validators
+            for port in self.blockchain.validators:
+                if port != mined_by:
+                    self.parameters[port]['cbm'] = 0
+                    if port not in self.parameters:
+                        self.parameters[port] = {'ss': 0, 'lit': 0, 'aist': 0, 'cst': 0, 'tst': 0, 'cbm': 0}
+                    self.parameters[port]['tst'] = block_pos + 1
+
+    def mine(self, message=None):
+        """
+        Activity Adjusted Stake Consensus (AASC) mining function.
+        
+        AASC is a fully distributed, on-chain consensus protocol. All activity metrics
+        are tracked from the blockchain itself - no off-chain learning system required.
+        
+        Complexity: O(v) per round, where v = number of validators
+        - Activity update: O(1) per block
+        - CS computation: O(v) (loop through all validators)
+        - Leader selection: O(v) (argmax)
+        
+        This is suitable for IoT networks where v << n (validators << total nodes).
+        """
+        # Handle churn: recover parameters if node rejoined
+        if len(self.blockchain.chain) > 3 and self.parameters is None:
+            self.recover_parameters_from_chain()
+        
+        if self.parameters == None:
+            self.parameters = {port : {'ss': 0, 'lit': 0, 'aist': 0, 'cst': 0, 'tst': 0, 'cbm': 0} for port in self.blockchain.validators}
+        
+        # print(f"{self.port} Blockchain length: {len(self.blockchain.chain)}")
+        if len(self.blockchain.chain) <= 3:
+            self.POS(message)
+            return
+        
+        # print("\n\n")
+        # print("Mining new block using AASC...")
+        block_pos = len(self.blockchain.chain) - 3
+        mined_by = self.blockchain.chain[block_pos].mined_by
+        self.parameters[mined_by]['aist'] = (self.parameters[mined_by]['aist'] * self.parameters[mined_by]['cst'] + block_pos + 1 - self.parameters[mined_by]['lit']) / (self.parameters[mined_by]['cst'] + 1)
+        self.parameters[mined_by]['cst'] += 1
+        self.parameters[mined_by]['tst'] = block_pos + 1 - self.active
+        self.parameters[mined_by]['lit'] = block_pos + 1
+        self.parameters[mined_by]['cbm'] += 1
+        for port in self.blockchain.validators:
+            if port != mined_by:
+                self.parameters[port]['cbm'] = 0
+                self.parameters[port]['tst'] = block_pos + 1 - self.active
+
+        # Compute Consensus Score (CS) for each validator
+        # Complexity: O(v) - must evaluate each validator
+        CS = [self.score(self.parameters[val]) for val in self.blockchain.validators]
+        # print(f"{self.port} Consensus Scores: {CS}")
+
+        # Select leader deterministically (all nodes compute same result)
+        # Complexity: O(v) - find argmax
+        block_producer_index = np.argmax(CS)
+        block_producer = list(self.blockchain.validators)[block_producer_index]
+        # print(f"{self.port} Block producer: {block_producer}")
+
+        if self.port == block_producer:
+            latest_block = self.blockchain.get_latest_block()
+            block = Block(len(self.blockchain.chain), latest_block.hash, int(time.time()), self.blockchain.pending_transactions, "", 0, self.port)
+            self.blockchain.pending_transactions = []
+            self.blockchain.add_block(block)
+            # print(f"Block mined by {self.port}")
+            if len(self.messages_id) != 0:
+                max_msg_id = max(self.messages_id)
+            else:
+                max_msg_id = 0
+            self.broadcast({
+                'type': 'new_block',
+                'data': block.to_dict(),
+                'id': max_msg_id + 1
+            })
+
+class NodeCLI(cmd.Cmd):
+    prompt = 'blockchain> '
+
+    def __init__(self, node):
+        super().__init__()
+        self.node = node
+        self.response = None
+
+    def do_params(self, arg):
+        """View the current parameters"""
+        print(f"Parameters: {self.node.parameters}")
+
+    def do_scores(self, arg):
+        """View the current scores"""
+        params = self.node.parameters
+        scores = {port: self.node.score(params[port]) for port in params}
+        print(f"Scores: {scores}")
+
+    def do_count(self, arg):
+        """Count the number of blocks in the blockchain"""
+        return len(self.node.blockchain.chain)
+
+    def do_sval(self, arg):
+        """Store the validators"""
+        if len(self.node.messages_id) != 0:
+            max_msg_id = max(self.node.messages_id)
+        else:
+            max_msg_id = 0
+        self.node.broadcast({
+            'type': 'store_validators',
+            'validators': list(self.node.blockchain.validators),
+            'id': max_msg_id + 1
+        })
+        # print("\n\nDONE\n\n")
+        max_msg_id = max(self.node.messages_id)
+        self.node.broadcast({
+            'type': 'store_validators',
+            'validators': list(self.node.blockchain.validators),
+            'id': max_msg_id + 1
+        })
+        # print("\n\nDONE\n\n")
+    
+    def do_val(self, arg):
+        """View the validators"""
+        print(f"Validators: {self.node.blockchain.validators}")
+        
+    # Note: PoEM-related commands removed - AASC is pure on-chain, no ML model needed
+
+    def do_viewchain(self, arg):
+        """View the current state of the blockchain"""
+        for block in self.node.blockchain.chain:
+            print(f"Block {block.index}:")
+            print(f"  Timestamp: {block.timestamp}")
+            print(f"  Data: {block.data}")
+            print(f"  Hash: {block.hash}")
+            print(f"  Previous Hash: {block.previous_hash}")
+            print(f"  Mined by: {block.mined_by}")
+            print()
+
+    def do_addtx(self, arg):
+        """Add a new transaction: addtx <recipient> <amount>"""
+        try:
+            recipient, amount = arg.split()
+            amount = int(amount)
+            if len(self.node.blockchain.chain) <= 6:
+                leader = self.node.select_leader()
+            else: 
+                leader = None
+            # self.node.blockchain.add_transaction(self.node.address, recipient, amount)
+            if len(self.node.messages_id) != 0:
+                max_msg_id = max(self.node.messages_id)
+            else:
+                max_msg_id = 0
+            message = {
+                'type': 'new_transaction',
+                'data': {
+                    'sender': str(self.node.address) + str(self.node.port),
+                    'recipient': recipient,
+                    'amount': amount
+                },
+                'leader': leader,
+                'id': max_msg_id + 1
+            }
+            self.node.broadcast(message)
+            self.node.blockchain.add_transaction(**message['data'])
+            if self.node.is_validator:
+                self.node.mine(message)
+            self.node.blockchain.pending_transactions = []
+            # print(f"Transaction added: {str(self.node.address) + str(self.node.port)} sends {amount} coins to {recipient}")
+        except ValueError:
+            # print("Invalid input. Use format: addtx <recipient> <amount>")
+            pass
+
+    def _notify_peer_to_add_us(self, address, port):
+        """Notify the peer to add this node as a peer"""
+        try:
+            message = {
+                'type': 'add_peer',
+                'address': self.node.address,
+                'port': self.node.port,
+                'is_validator': self.node.is_validator
+            }
+
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.connect((address, port))
+                s.sendall(json.dumps(message).encode())
+
+                response = s.recv(4096)
+                if response:
+                    response = json.loads(response.decode())
+                    self.response = response
+
+            # print(f"Successfully notified peer {address}:{port} to add us as a peer.")
+            return True
+
+        except Exception as e:
+            # print(f"Error notifying peer {address}:{port}: {e}")
+            return False
+    def do_resources(self, arg):
+        cpu_usage = psutil.cpu_percent()
+        per_core_usage = sum(psutil.cpu_percent(percpu=True))/psutil.cpu_count()
+        physical_cores = psutil.cpu_count(logical=False)
+        logical_cpus = psutil.cpu_count(logical=True)
+        res = {
+            'cpu_usage': cpu_usage,
+            'per_core_usage': per_core_usage,
+            'physical_cores': physical_cores,
+            'logical_cpus': logical_cpus
+        }
+        return res
+
+    def do_mine(self, arg):
+        """Mine a new block"""
+        if self.node.is_validator:
+            # print("Mining a new block...")
+            self.node.mine()
+            # print("Block mined and added to the chain.")
+        else:
+            # print("This node is not a miner.")
+            pass
+
+    def do_addpeer(self, arg):
+        """Add a new peer: addpeer <address> <port>"""
+        try:
+            address, port = arg.split()
+            port = int(port)
+            if (address, port) in self.node.peers:
+                # print("This peer is already connected.")
+                return
+            
+            if address == self.node.address and port == self.node.port:
+                # print("Cannot connect to self.")
+                return
+            
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
+                try:
+                    s.connect((address, port))
+                except Exception as e:
+                    # print(f"Failed to connect to peer {address}:{port}: {e}")
+                    return
+            
+            if self._notify_peer_to_add_us(address, port):
+                self.node.add_peer(address, port)
+                response = self.response
+                if response and response['is_validator']:
+                    self.node.add_node((address, port))
+
+                # print(f"Peer added: {address}:{port}")
+            else:
+                # print(f"Failed to add peer: {address}:{port}")
+                pass
+            
+        except ValueError:
+            # print("Invalid input. Use format: addpeer <address> <port>")
+            pass
+
+    def do_listpeers(self, arg):
+        """List all peers"""
+        if self.node.peers:
+            print("Connected peers:")
+            for peer in self.node.peers:
+                print(f"  - {peer[0]}:{peer[1]}")
+        else:
+            print("This node has no connected peers.")
+
+    # Note: PoEM-related commands removed - AASC is pure on-chain, no ML model needed
+    
+    def do_exit(self, arg):
+        """Exit the CLI"""
+        self.node.stop()
+        return True
+
+def run_node(address, port, is_validator):
+    node = Node(address, port, is_validator)
+    cli_thread = threading.Thread(target=NodeCLI(node).cmdloop, args=(f"Started CLI for {address}:{port}",))
+    cli_thread.daemon = True
+    cli_thread.start()
+    node.start()
+
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python script.py <port> <is_validator>")
+        sys.exit(1)
+    
+    address = "127.0.0.1"
+    port = int(sys.argv[1])
+    is_validator = sys.argv[2].lower() == "true"
+    
+    run_node(address, port, is_validator)

@@ -1,0 +1,81 @@
+Number of Nodes: 20, Number of Miners: 10, Number of transaction: 100
+Test Results for 20 nodes and 10 miners
+--------------------------------------------------
+Algorithm           Throughput    Latency    CPU Usage    Memory Usage
+----------------  ------------  ---------  -----------  --------------
+PoS (Baseline)        0.517235  1.93336           44.6         2.55078
+PoCH (Baseline)       0.915404  1.09241           17.9        11.543
+AASC (Proposed)      25.5972    0.0390667         82.5        18.4336
+PoEM (Reference)      4.0263    0.248367          98           8.76953
+--------------------------------------------------
+
+
+
+Number of Nodes: 30, Number of Miners: 10, Number of transaction: 100
+Test Results for 30 nodes and 10 miners
+--------------------------------------------------
+Algorithm           Throughput    Latency    CPU Usage    Memory Usage
+----------------  ------------  ---------  -----------  --------------
+PoS (Baseline)        0.249448  4.00885           75          14.2812
+PoCH (Baseline)       0.823968  1.21364           67.9         9.69531
+AASC (Proposed)      25.956     0.0385267         28.1         2.39062
+PoEM (Reference)      3.96702   0.252078          79.5        52.5234
+--------------------------------------------------
+
+
+
+Number of Nodes: 40, Number of Miners: 10, Number of transaction: 100
+Test Results for 40 nodes and 10 miners
+--------------------------------------------------
+Algorithm           Throughput    Latency    CPU Usage    Memory Usage
+----------------  ------------  ---------  -----------  --------------
+PoS (Baseline)        0.201451  4.96398           83.1         29.7734
+PoCH (Baseline)       0.778512  1.2845            72.8         18
+AASC (Proposed)      13.8655    0.0721216         64.2         29.1719
+PoEM (Reference)      3.12627   0.31987           90.2         30.9922
+--------------------------------------------------
+
+
+
+Number of Nodes: 50, Number of Miners: 10, Number of transaction: 100
+Test Results for 50 nodes and 10 miners
+--------------------------------------------------
+Algorithm           Throughput    Latency    CPU Usage    Memory Usage
+----------------  ------------  ---------  -----------  --------------
+PoS (Baseline)        0.131186   7.62274          96           49.7422
+PoCH (Baseline)       0.491432   2.03487         118.6         22.7422
+AASC (Proposed)       0.907359   1.1021          260.5         26.0195
+PoEM (Reference)      1.18253    0.845646        142.3         71.3164
+--------------------------------------------------
+
+
+Number of Nodes: 70, Number of Miners: 14, Number of transaction: 100
+Test Results for 70 nodes and 14 miners
+--------------------------------------------------
+Algorithm           Throughput    Latency    CPU Usage    Memory Usage
+----------------  ------------  ---------  -----------  --------------
+PoS (Baseline)        0.111948   8.93271          96.3         66.4844
+PoCH (Baseline)       0.468438   2.13475         157.7         35.6055
+AASC (Proposed)       2.22734    0.448965        116           62.9453
+PoEM (Reference)      0.911747   1.0968          141.8         55.9375
+--------------------------------------------------
+
+
+
+Number of Nodes: 100, Number of Miners: 20, Number of transaction: 100
+Test Results for 100 nodes and 20 miners
+--------------------------------------------------
+Algorithm           Throughput    Latency    CPU Usage    Memory Usage
+----------------  ------------  ---------  -----------  --------------
+PoS (Baseline)       0.073999    13.5137         104.1        105.84
+PoCH (Baseline)      0.365024     2.73955        138.1         20.4297
+AASC (Proposed)      0.784396     1.27487        280.6        122.305
+PoEM (Reference)     0.0805728   12.4111         243.5         18.918
+--------------------------------------------------
+
+
+
+
+
+
+

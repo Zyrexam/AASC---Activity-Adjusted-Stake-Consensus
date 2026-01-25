@@ -1,0 +1,46 @@
+{
+  "timestamp": "2026-01-25T20:57:10.184010",
+  "test_config": {
+    "nodes": 20,
+    "miners": 4,
+    "churn_rate": 0.0
+  },
+  "results": {
+    "AASC": {
+      "throughput": 1.839741835116584,
+      "latency": 0.5435545253753662,
+      "cpu_usage": 0.0,
+      "memory_usage": 175.02734375,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    },
+    "PoS": {
+      "throughput": 0.3629112221263813,
+      "latency": 2.755494840145111,
+      "cpu_usage": 0.0,
+      "memory_usage": 170.6328125,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    },
+    "PoCH": {
+      "throughput": 0.6361155997309914,
+      "latency": 1.5720413088798524,
+      "cpu_usage": 0.0,
+      "memory_usage": 157.33984375,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    },
+    "PoEM": {
+      "throughput": 1.4879358047288593,
+      "latency": 0.6720720052719116,
+      "cpu_usage": 0.0,
+      "memory_usage": 183.19921875,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    }
+  }
+}
