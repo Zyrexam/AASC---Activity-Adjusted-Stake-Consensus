@@ -91,6 +91,7 @@ class Node:
 
     def ask_stake(self, address, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
             try:
                 s.connect((address, port))
                 s.sendall(json.dumps({'type': 'get_stake'}).encode())
@@ -244,6 +245,7 @@ class Node:
     def broadcast_to_peer(self, peer, message):
         # print(f"Broadcasting to peer {peer}")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
             try:
                 s.connect(peer)
                 # print(f"Connected to peer {peer}")
@@ -561,6 +563,7 @@ class NodeCLI(cmd.Cmd):
             }
 
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
                 s.connect((address, port))
                 s.sendall(json.dumps(message).encode())
 

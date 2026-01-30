@@ -1,0 +1,38 @@
+{
+  "timestamp": "2026-01-28T20:09:04.416323",
+  "config": {
+    "nodes": 30,
+    "miners": 6,
+    "churn_rate": 0.25
+  },
+  "results": {
+    "AASC": {
+      "throughput": 3.8454,
+      "avg_tx_submission_time": 0.2601,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    },
+    "PoS": {
+      "throughput": 0.3323,
+      "avg_tx_submission_time": 3.0092,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    },
+    "PoCH": {
+      "throughput": 0.3258,
+      "avg_tx_submission_time": 3.0696,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    },
+    "PoEM": {
+      "throughput": 0.3666,
+      "avg_tx_submission_time": 2.7278,
+      "total_transactions": 100,
+      "failed_transactions": 0,
+      "success_rate": 100.0
+    }
+  }
+}

@@ -228,6 +228,7 @@ class Node:
 
     def ask_stake(self, address, port):
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
             flag = True
             cnt = 0
             while flag:
@@ -408,6 +409,7 @@ class Node:
     def broadcast_to_peer(self, peer, message):
         # print(f"Broadcasting to peer {peer}")
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
             try:
                 s.connect(peer)
                 # print(f"Connected to peer {peer}")
@@ -477,6 +479,7 @@ class Node:
     def synchronize_model(self):
         for peer in self.peers:
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
                 try:
                     s.connect(peer)
                     s.sendall(json.dumps({'type': 'get_model'}).encode())
@@ -682,6 +685,7 @@ class NodeCLI(cmd.Cmd):
             }
 
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
                 s.connect((address, port))
                 s.sendall(json.dumps(message).encode())
 

@@ -245,6 +245,7 @@ class Node:
             peer_address, peer_port = peer
             try:
                 with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                    s.settimeout(1)
                     s.connect((peer_address, peer_port))
                     s.sendall(message)
             except Exception as e:
@@ -596,6 +597,7 @@ class NodeCLI(cmd.Cmd):
             }
 
             with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.settimeout(1)
                 s.connect((address, port))
                 s.sendall(json.dumps(message).encode())
 
